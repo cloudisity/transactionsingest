@@ -1,7 +1,9 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using TransactionsIngest.Configuration;
 using TransactionsIngest.Data;
+using TransactionsIngest.Services;
 
 var configuration = new ConfigurationBuilder()
     .SetBasePath(AppContext.BaseDirectory)
@@ -11,9 +13,7 @@ var configuration = new ConfigurationBuilder()
 var settings = new IngestionSettings();
 configuration.GetSection(IngestionSettings.SectionName).Bind(settings);
 
-Console.WriteLine($"Mock feed enabled: {settings.UseMockFeed}");
-Console.WriteLine($"Connection string: {settings.ConnectionString}");
-Console.WriteLine($"Look-back window: {settings.LookBackHours}h");
+using var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
 
 var options = new DbContextOptionsBuilder<TransactionsDbContext>()
     .UseSqlite(settings.ConnectionString)
@@ -22,4 +22,11 @@ var options = new DbContextOptionsBuilder<TransactionsDbContext>()
 using var db = new TransactionsDbContext(options);
 await db.Database.EnsureCreatedAsync();
 
-Console.WriteLine("Database ready.");
+var fetcher = new MockTransactionFetcher(settings, loggerFactory.CreateLogger<MockTransactionFetcher>());
+var snapshot = await fetcher.FetchTransactionsAsync();
+
+Console.WriteLine($"Fetched {snapshot.Count} transactions:");
+foreach (var txn in snapshot)
+{
+    Console.WriteLine($"  #{txn.TransactionId} - {txn.ProductName} - ${txn.Amount}");
+}
