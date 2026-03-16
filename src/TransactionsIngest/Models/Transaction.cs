@@ -29,7 +29,6 @@ public class Transaction
     public string ProductName { get; set; } = string.Empty;
 
     [Column(TypeName = "decimal(18, 2)")]
-
     public decimal Amount { get; set; }
 
     public DateTime Timestamp { get; set; }
@@ -37,6 +36,6 @@ public class Transaction
     public TransactionStatus Status { get; set; }
 
     public DateTime CreatedAtUTC { get; set; }
-    
+
     public DateTime UpdatedAtUTC { get; set; }
 }
