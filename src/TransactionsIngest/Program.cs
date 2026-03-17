@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TransactionsIngest.Configuration;
 using TransactionsIngest.Data;
@@ -13,20 +14,47 @@ var configuration = new ConfigurationBuilder()
 var settings = new IngestionSettings();
 configuration.GetSection(IngestionSettings.SectionName).Bind(settings);
 
-using var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
+var services = new ServiceCollection();
 
-var options = new DbContextOptionsBuilder<TransactionsDbContext>()
-    .UseSqlite(settings.ConnectionString)
-    .Options;
+services.AddSingleton(settings);
+services.AddSingleton<IClock, SystemClock>();
 
-using var db = new TransactionsDbContext(options);
-await db.Database.EnsureCreatedAsync();
+services.AddDbContext<TransactionsDbContext>(options =>
+    options.UseSqlite(settings.ConnectionString));
 
-var fetcher = new MockTransactionFetcher(settings, loggerFactory.CreateLogger<MockTransactionFetcher>());
-var snapshot = await fetcher.FetchTransactionsAsync();
+services.AddSingleton<ITransactionFetcher, MockTransactionFetcher>();
+services.AddTransient<IngestionService>();
 
-Console.WriteLine($"Fetched {snapshot.Count} transactions:");
-foreach (var txn in snapshot)
+services.AddLogging(builder =>
 {
-    Console.WriteLine($"  #{txn.TransactionId} - {txn.ProductName} - ${txn.Amount}");
+    builder.AddConsole();
+    builder.SetMinimumLevel(LogLevel.Information);
+});
+
+await using var serviceProvider = services.BuildServiceProvider();
+
+using (var scope = serviceProvider.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<TransactionsDbContext>();
+    await db.Database.EnsureCreatedAsync();
+}
+
+using var cts = new CancellationTokenSource();
+Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+
+try
+{
+    var ingestion = serviceProvider.GetRequiredService<IngestionService>();
+    await ingestion.IngestTransactionsAsync(cts.Token);
+    return 0;
+}
+catch (OperationCanceledException)
+{
+    Console.WriteLine("Ingestion cancelled.");
+    return 1;
+}
+catch (Exception ex)
+{
+    Console.Error.WriteLine($"Fatal error: {ex.Message}");
+    return 1;
 }
