@@ -40,11 +40,15 @@ public class IngestionService
             _logger.LogInformation("Received {Count} transactions in snapshot", snapshot.Count);
 
             var now = _clock.UtcNow;
+            var cutoff = now.AddHours(-_settings.LookBackHours);
+            var snapshotIds = new HashSet<int>(snapshot.Select(s => s.TransactionId));
 
             foreach (var dto in snapshot)
             {
                 await UpsertTransactionAsync(dto, now, ct);
             }
+
+            await RevokeAbsentTransactionsAsync(snapshotIds, cutoff, now, ct);
             
             await _db.SaveChangesAsync(ct);
             await dbTransaction.CommitAsync(ct);
