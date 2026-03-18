@@ -48,7 +48,11 @@ public class IngestionService
                 await UpsertTransactionAsync(dto, now, ct);
             }
 
+            await _db.SaveChangesAsync(ct);
+
             await RevokeAbsentTransactionsAsync(snapshotIds, cutoff, now, ct);
+
+            await FinalizeOldTransactionsAsync(cutoff, now, ct);
             
             await _db.SaveChangesAsync(ct);
             await dbTransaction.CommitAsync(ct);
@@ -166,6 +170,28 @@ public class IngestionService
             });
 
             _logger.LogInformation("Revoked TransactionId {Id}", txn.TransactionId);
+        }
+    }
+    private async Task FinalizeOldTransactionsAsync(DateTime cutoff, DateTime now, CancellationToken ct)
+    {
+        var candidates = await _db.Transactions
+            .Where(t => t.Status == TransactionStatus.Active
+                        && t.Timestamp < cutoff)
+            .ToListAsync(ct);
+
+        foreach (var txn in candidates)
+        {
+            txn.Status = TransactionStatus.Finalized;
+            txn.UpdatedAtUTC = now;
+
+            _db.Auditlogs.Add(new Auditlog
+            {
+                TransactionId = txn.TransactionId,
+                ChangeType = ChangeType.Finalized,
+                TimestampUTC = now
+            });
+
+            _logger.LogInformation("Finalized TransactionId {Id}", txn.TransactionId);
         }
     }
     private static List<(string Field, string OldValue, string NewValue)> DetectChanges(
