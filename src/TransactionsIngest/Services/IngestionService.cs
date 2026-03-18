@@ -60,40 +60,100 @@ public class IngestionService
     }
 
     private async Task UpsertTransactionAsync(TransactionDto dto, DateTime now, CancellationToken ct)
-    {
-        var existing = await _db.Transactions
-            .FirstOrDefaultAsync(t => t.TransactionId == dto.TransactionId, ct);
-
-        if (existing is null)
         {
-            var entity = new Transaction
+            var existing = await _db.Transactions
+                .FirstOrDefaultAsync(t => t.TransactionId == dto.TransactionId, ct);
+
+            if (existing is null)
             {
-                TransactionId = dto.TransactionId,
-                CardNumberHash = CardNumberHelper.Hash(dto.CardNumber),
-                CardNumberLast4 = CardNumberHelper.Last4(dto.CardNumber),
-                LocationCode = dto.LocationCode,
-                ProductName = dto.ProductName,
-                Amount = dto.Amount,
-                Timestamp = DateTime.SpecifyKind(dto.Timestamp, DateTimeKind.Utc),
-                Status = TransactionStatus.Active,
-                CreatedAtUTC = now,
-                UpdatedAtUTC = now
-            };
+                var entity = new Transaction
+                {
+                    TransactionId = dto.TransactionId,
+                    CardNumberHash = CardNumberHelper.Hash(dto.CardNumber),
+                    CardNumberLast4 = CardNumberHelper.Last4(dto.CardNumber),
+                    LocationCode = dto.LocationCode,
+                    ProductName = dto.ProductName,
+                    Amount = dto.Amount,
+                    Timestamp = DateTime.SpecifyKind(dto.Timestamp, DateTimeKind.Utc),
+                    Status = TransactionStatus.Active,
+                    CreatedAtUTC = now,
+                    UpdatedAtUTC = now
+                };
 
-            _db.Transactions.Add(entity);
+                _db.Transactions.Add(entity);
 
-            _db.Auditlogs.Add(new Auditlog
+                _db.Auditlogs.Add(new Auditlog
+                {
+                    TransactionId = dto.TransactionId,
+                    ChangeType = ChangeType.Created,
+                    TimestampUTC = now
+                });
+
+                _logger.LogInformation("Inserted TransactionId {Id}", dto.TransactionId);
+                return;
+            }
+
+            if (existing.Status == TransactionStatus.Finalized)
             {
-                TransactionId = dto.TransactionId,
-                ChangeType = ChangeType.Created,
-                TimestampUTC = now
-            });
+                _logger.LogDebug("Skipping finalized TransactionId {Id}", dto.TransactionId);
+                return;
+            }
 
-            _logger.LogInformation("Inserted TransactionId {Id}", dto.TransactionId);
-            return;
+            var changes = DetectChanges(existing, dto);
+
+            if (changes.Count == 0)
+            {
+                _logger.LogDebug("No changes for TransactionId {Id}", dto.TransactionId);
+                return;
+            }
+
+            existing.CardNumberHash = CardNumberHelper.Hash(dto.CardNumber);
+            existing.CardNumberLast4 = CardNumberHelper.Last4(dto.CardNumber);
+            existing.LocationCode = dto.LocationCode;
+            existing.ProductName = dto.ProductName;
+            existing.Amount = dto.Amount;
+            existing.Timestamp = DateTime.SpecifyKind(dto.Timestamp, DateTimeKind.Utc);
+            existing.UpdatedAtUTC = now;
+
+            foreach (var (field, oldVal, newVal) in changes)
+            {
+                _db.Auditlogs.Add(new Auditlog
+                {
+                    TransactionId = dto.TransactionId,
+                    ChangeType = ChangeType.Updated,
+                    FieldName = field,
+                    OldValue = oldVal,
+                    NewValue = newVal,
+                    TimestampUTC = now
+                });
+            }
+
+            _logger.LogInformation("Updated TransactionId {Id}: {Fields}",
+                dto.TransactionId,
+                string.Join(", ", changes.Select(c => c.Field)));
         }
+    private static List<(string Field, string OldValue, string NewValue)> DetectChanges(
+        Transaction existing, TransactionDto dto)
+    {
+        var changes = new List<(string, string, string)>();
 
-        // TODO: update detection
-        _logger.LogDebug("TransactionId {Id} already exists, skipping for now", dto.TransactionId);
+        var newHash = CardNumberHelper.Hash(dto.CardNumber);
+        if (existing.CardNumberHash != newHash)
+            changes.Add(("CardNumber", $"****{existing.CardNumberLast4}", $"****{CardNumberHelper.Last4(dto.CardNumber)}"));
+
+        if (existing.LocationCode != dto.LocationCode)
+            changes.Add(("LocationCode", existing.LocationCode, dto.LocationCode));
+
+        if (existing.ProductName != dto.ProductName)
+            changes.Add(("ProductName", existing.ProductName, dto.ProductName));
+
+        if (existing.Amount != dto.Amount)
+            changes.Add(("Amount", existing.Amount.ToString("F2"), dto.Amount.ToString("F2")));
+
+        var dtoTime = DateTime.SpecifyKind(dto.Timestamp, DateTimeKind.Utc);
+        if (existing.Timestamp != dtoTime)
+            changes.Add(("Timestamp", existing.Timestamp.ToString("O"), dtoTime.ToString("O")));
+
+        return changes;
     }
 }
