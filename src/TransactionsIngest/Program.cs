@@ -22,7 +22,17 @@ services.AddSingleton<IClock, SystemClock>();
 services.AddDbContext<TransactionsDbContext>(options =>
     options.UseSqlite(settings.ConnectionString));
 
-services.AddSingleton<ITransactionFetcher, MockTransactionFetcher>();
+if (settings.UseMockFeed)
+{
+    services.AddSingleton<ITransactionFetcher, MockTransactionFetcher>();
+}
+else
+{
+    services.AddHttpClient<HttpTransactionFetcher>();
+    services.AddSingleton<ITransactionFetcher>(sp =>
+        sp.GetRequiredService<HttpTransactionFetcher>());
+}
+
 services.AddTransient<IngestionService>();
 
 services.AddLogging(builder =>

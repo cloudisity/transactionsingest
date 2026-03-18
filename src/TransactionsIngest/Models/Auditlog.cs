@@ -15,7 +15,6 @@ public class Auditlog
 {
     [Key]
     [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
-
     public int Id { get; set; }
 
     public int TransactionId { get; set; }
@@ -25,11 +24,11 @@ public class Auditlog
     [MaxLength(50)]
     public string? FieldName { get; set; }
 
-    [MaxLength(500)] 
-    public string? OldValue { get; set; } = string.Empty;
+    [MaxLength(500)]
+    public string? OldValue { get; set; }
 
     [MaxLength(500)]
-    public string? NewValue { get; set; } = string.Empty;
+    public string? NewValue { get; set; }
 
     public DateTime TimestampUTC { get; set; }
 }

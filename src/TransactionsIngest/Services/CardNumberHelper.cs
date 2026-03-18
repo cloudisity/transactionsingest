@@ -8,7 +8,7 @@ public static class CardNumberHelper
     public static string Hash(string cardNumber)
     {
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(cardNumber));
-        return Convert.ToBase64String(bytes).ToLowerInvariant();
+        return Convert.ToHexString(bytes).ToLowerInvariant();
     }
 
     public static string Last4(string cardNumber)

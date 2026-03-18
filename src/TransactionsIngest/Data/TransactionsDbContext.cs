@@ -15,9 +15,8 @@ public class TransactionsDbContext : DbContext
     {
         modelBuilder.Entity<Transaction>(entity =>
         {
-            entity.HasIndex(t => t.TransactionId).IsUnique();
             entity.HasIndex(t => t.Status);
-            entity.HasIndex(t => t.Timestamp);
+            entity.HasIndex(t => t.TransactionTime);
         });
 
         modelBuilder.Entity<Auditlog>(entity =>

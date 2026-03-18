@@ -27,7 +27,7 @@ public class IngestionService
         _logger = logger;
         _clock = clock;
     }
-    
+
     public async Task IngestTransactionsAsync(CancellationToken ct = default)
     {
         _logger.LogInformation("=== Ingestion run starting at {UtcNow} ===", _clock.UtcNow);
@@ -51,12 +51,11 @@ public class IngestionService
             await _db.SaveChangesAsync(ct);
 
             await RevokeAbsentTransactionsAsync(snapshotIds, cutoff, now, ct);
-
             await FinalizeOldTransactionsAsync(cutoff, now, ct);
-            
+
             await _db.SaveChangesAsync(ct);
             await dbTransaction.CommitAsync(ct);
-            
+
             _logger.LogInformation("=== Ingestion run completed successfully ===");
         }
         catch (Exception ex)
@@ -68,44 +67,44 @@ public class IngestionService
     }
 
     private async Task UpsertTransactionAsync(TransactionDto dto, DateTime now, CancellationToken ct)
+    {
+        var existing = await _db.Transactions
+            .FirstOrDefaultAsync(t => t.TransactionId == dto.TransactionId, ct);
+
+        if (existing is null)
         {
-            var existing = await _db.Transactions
-                .FirstOrDefaultAsync(t => t.TransactionId == dto.TransactionId, ct);
-
-            if (existing is null)
+            var entity = new Transaction
             {
-                var entity = new Transaction
-                {
-                    TransactionId = dto.TransactionId,
-                    CardNumberHash = CardNumberHelper.Hash(dto.CardNumber),
-                    CardNumberLast4 = CardNumberHelper.Last4(dto.CardNumber),
-                    LocationCode = dto.LocationCode,
-                    ProductName = dto.ProductName,
-                    Amount = dto.Amount,
-                    Timestamp = DateTime.SpecifyKind(dto.Timestamp, DateTimeKind.Utc),
-                    Status = TransactionStatus.Active,
-                    CreatedAtUTC = now,
-                    UpdatedAtUTC = now
-                };
+                TransactionId = dto.TransactionId,
+                CardNumberHash = CardNumberHelper.Hash(dto.CardNumber),
+                CardNumberLast4 = CardNumberHelper.Last4(dto.CardNumber),
+                LocationCode = dto.LocationCode,
+                ProductName = dto.ProductName,
+                Amount = dto.Amount,
+                TransactionTime = DateTime.SpecifyKind(dto.Timestamp, DateTimeKind.Utc),
+                Status = TransactionStatus.Active,
+                CreatedAtUTC = now,
+                UpdatedAtUTC = now
+            };
 
-                _db.Transactions.Add(entity);
+            _db.Transactions.Add(entity);
 
-                _db.Auditlogs.Add(new Auditlog
-                {
-                    TransactionId = dto.TransactionId,
-                    ChangeType = ChangeType.Created,
-                    TimestampUTC = now
-                });
-
-                _logger.LogInformation("Inserted TransactionId {Id}", dto.TransactionId);
-                return;
-            }
-
-            if (existing.Status == TransactionStatus.Finalized)
+            _db.Auditlogs.Add(new Auditlog
             {
-                _logger.LogDebug("Skipping finalized TransactionId {Id}", dto.TransactionId);
-                return;
-            }
+                TransactionId = dto.TransactionId,
+                ChangeType = ChangeType.Created,
+                TimestampUTC = now
+            });
+
+            _logger.LogInformation("Inserted TransactionId {Id}", dto.TransactionId);
+            return;
+        }
+
+        if (existing.Status == TransactionStatus.Finalized)
+        {
+            _logger.LogDebug("Skipping finalized TransactionId {Id}", dto.TransactionId);
+            return;
+        }
 
         var changes = DetectChanges(existing, dto);
 
@@ -121,37 +120,38 @@ public class IngestionService
             return;
         }
 
-            existing.CardNumberHash = CardNumberHelper.Hash(dto.CardNumber);
-            existing.CardNumberLast4 = CardNumberHelper.Last4(dto.CardNumber);
-            existing.LocationCode = dto.LocationCode;
-            existing.ProductName = dto.ProductName;
-            existing.Amount = dto.Amount;
-            existing.Timestamp = DateTime.SpecifyKind(dto.Timestamp, DateTimeKind.Utc);
-            existing.UpdatedAtUTC = now;
+        existing.CardNumberHash = CardNumberHelper.Hash(dto.CardNumber);
+        existing.CardNumberLast4 = CardNumberHelper.Last4(dto.CardNumber);
+        existing.LocationCode = dto.LocationCode;
+        existing.ProductName = dto.ProductName;
+        existing.Amount = dto.Amount;
+        existing.TransactionTime = DateTime.SpecifyKind(dto.Timestamp, DateTimeKind.Utc);
+        existing.UpdatedAtUTC = now;
 
-            foreach (var (field, oldVal, newVal) in changes)
+        foreach (var (field, oldVal, newVal) in changes)
+        {
+            _db.Auditlogs.Add(new Auditlog
             {
-                _db.Auditlogs.Add(new Auditlog
-                {
-                    TransactionId = dto.TransactionId,
-                    ChangeType = ChangeType.Updated,
-                    FieldName = field,
-                    OldValue = oldVal,
-                    NewValue = newVal,
-                    TimestampUTC = now
-                });
-            }
-
-            _logger.LogInformation("Updated TransactionId {Id}: {Fields}",
-                dto.TransactionId,
-                string.Join(", ", changes.Select(c => c.Field)));
+                TransactionId = dto.TransactionId,
+                ChangeType = ChangeType.Updated,
+                FieldName = field,
+                OldValue = oldVal,
+                NewValue = newVal,
+                TimestampUTC = now
+            });
         }
-        private async Task RevokeAbsentTransactionsAsync(
+
+        _logger.LogInformation("Updated TransactionId {Id}: {Fields}",
+            dto.TransactionId,
+            string.Join(", ", changes.Select(c => c.Field)));
+    }
+
+    private async Task RevokeAbsentTransactionsAsync(
         HashSet<int> snapshotIds, DateTime cutoff, DateTime now, CancellationToken ct)
     {
         var candidates = await _db.Transactions
             .Where(t => t.Status == TransactionStatus.Active
-                        && t.Timestamp >= cutoff)
+                        && t.TransactionTime >= cutoff)
             .ToListAsync(ct);
 
         foreach (var txn in candidates)
@@ -172,11 +172,12 @@ public class IngestionService
             _logger.LogInformation("Revoked TransactionId {Id}", txn.TransactionId);
         }
     }
+
     private async Task FinalizeOldTransactionsAsync(DateTime cutoff, DateTime now, CancellationToken ct)
     {
         var candidates = await _db.Transactions
             .Where(t => t.Status == TransactionStatus.Active
-                        && t.Timestamp < cutoff)
+                        && t.TransactionTime < cutoff)
             .ToListAsync(ct);
 
         foreach (var txn in candidates)
@@ -194,6 +195,7 @@ public class IngestionService
             _logger.LogInformation("Finalized TransactionId {Id}", txn.TransactionId);
         }
     }
+
     private static List<(string Field, string OldValue, string NewValue)> DetectChanges(
         Transaction existing, TransactionDto dto)
     {
@@ -213,8 +215,8 @@ public class IngestionService
             changes.Add(("Amount", existing.Amount.ToString("F2"), dto.Amount.ToString("F2")));
 
         var dtoTime = DateTime.SpecifyKind(dto.Timestamp, DateTimeKind.Utc);
-        if (existing.Timestamp != dtoTime)
-            changes.Add(("Timestamp", existing.Timestamp.ToString("O"), dtoTime.ToString("O")));
+        if (existing.TransactionTime != dtoTime)
+            changes.Add(("TransactionTime", existing.TransactionTime.ToString("O"), dtoTime.ToString("O")));
 
         return changes;
     }

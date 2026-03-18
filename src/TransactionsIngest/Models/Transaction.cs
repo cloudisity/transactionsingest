@@ -13,10 +13,10 @@ public enum TransactionStatus
 public class Transaction
 {
     [Key]
-    [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
+    [DatabaseGenerated(DatabaseGeneratedOption.None)]
     public int TransactionId { get; set; }
 
-    [MaxLength(19)]
+    [MaxLength(64)]
     public string CardNumberHash { get; set; } = string.Empty;
 
     [MaxLength(4)]
@@ -31,7 +31,7 @@ public class Transaction
     [Column(TypeName = "decimal(18, 2)")]
     public decimal Amount { get; set; }
 
-    public DateTime Timestamp { get; set; }
+    public DateTime TransactionTime { get; set; }
 
     public TransactionStatus Status { get; set; }
 

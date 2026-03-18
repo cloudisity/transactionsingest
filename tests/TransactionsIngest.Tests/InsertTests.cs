@@ -78,7 +78,7 @@ public class InsertTests : IDisposable
 
         var txn = await _db.Transactions.SingleAsync(t => t.TransactionId == 3001);
         Assert.NotEqual("4111111111111111", txn.CardNumberHash);
-        Assert.Equal(44, txn.CardNumberHash.Length); // SHA-256 Base64 length
+        Assert.Equal(64, txn.CardNumberHash.Length);
         Assert.Equal("1111", txn.CardNumberLast4);
     }
 

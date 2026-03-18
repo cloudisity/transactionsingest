@@ -12,10 +12,10 @@ public class MockTransactionFetcher : ITransactionFetcher
 
     public MockTransactionFetcher(IngestionSettings settings, ILogger<MockTransactionFetcher> logger)
     {
-
-    _settings = settings;
-    _logger = logger;
+        _settings = settings;
+        _logger = logger;
     }
+
     public async Task<IReadOnlyList<TransactionDto>> FetchTransactionsAsync(CancellationToken ct = default)
     {
         var path = Path.Combine(AppContext.BaseDirectory, _settings.MockFeedPath);
