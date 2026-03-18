@@ -103,13 +103,19 @@ public class IngestionService
                 return;
             }
 
-            var changes = DetectChanges(existing, dto);
+        var changes = DetectChanges(existing, dto);
 
-            if (changes.Count == 0)
-            {
-                _logger.LogDebug("No changes for TransactionId {Id}", dto.TransactionId);
-                return;
-            }
+        if (existing.Status == TransactionStatus.Revoked)
+        {
+            changes.Add(("Status", existing.Status.ToString(), TransactionStatus.Active.ToString()));
+            existing.Status = TransactionStatus.Active;
+        }
+
+        if (changes.Count == 0)
+        {
+            _logger.LogDebug("No changes for TransactionId {Id}", dto.TransactionId);
+            return;
+        }
 
             existing.CardNumberHash = CardNumberHelper.Hash(dto.CardNumber);
             existing.CardNumberLast4 = CardNumberHelper.Last4(dto.CardNumber);
@@ -136,6 +142,32 @@ public class IngestionService
                 dto.TransactionId,
                 string.Join(", ", changes.Select(c => c.Field)));
         }
+        private async Task RevokeAbsentTransactionsAsync(
+        HashSet<int> snapshotIds, DateTime cutoff, DateTime now, CancellationToken ct)
+    {
+        var candidates = await _db.Transactions
+            .Where(t => t.Status == TransactionStatus.Active
+                        && t.Timestamp >= cutoff)
+            .ToListAsync(ct);
+
+        foreach (var txn in candidates)
+        {
+            if (snapshotIds.Contains(txn.TransactionId))
+                continue;
+
+            txn.Status = TransactionStatus.Revoked;
+            txn.UpdatedAtUTC = now;
+
+            _db.Auditlogs.Add(new Auditlog
+            {
+                TransactionId = txn.TransactionId,
+                ChangeType = ChangeType.Revoked,
+                TimestampUTC = now
+            });
+
+            _logger.LogInformation("Revoked TransactionId {Id}", txn.TransactionId);
+        }
+    }
     private static List<(string Field, string OldValue, string NewValue)> DetectChanges(
         Transaction existing, TransactionDto dto)
     {
